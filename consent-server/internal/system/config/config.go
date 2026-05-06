@@ -86,8 +86,9 @@ type AuthStatus string
 
 // ConsentConfig holds consent-related configuration
 type ConsentConfig struct {
-	StatusMappings     ConsentStatusMappings `yaml:"status_mappings"`
-	AuthStatusMappings AuthStatusMappings    `yaml:"auth_status_mappings"`
+	ExpirationFrequency string                `yaml:"expiration_frequency"`
+	StatusMappings      ConsentStatusMappings `yaml:"status_mappings"`
+	AuthStatusMappings  AuthStatusMappings    `yaml:"auth_status_mappings"`
 }
 
 // ConsentStatusMappings holds the mapping of specific consent lifecycle states
@@ -323,6 +324,14 @@ func validateConfig(config *Config) error {
 	}
 	if config.Consent.AuthStatusMappings.SystemRevokedState == "" {
 		return fmt.Errorf("auth system revoked status mapping is required")
+	}
+
+	// Validate expiration frequency format if provided
+	if config.Consent.ExpirationFrequency != "" {
+		if _, err := time.ParseDuration(config.Consent.ExpirationFrequency); err != nil {
+			return fmt.Errorf("invalid consent expiration_frequency %q: must be a valid duration (e.g. '5m', '1h'): %w",
+				config.Consent.ExpirationFrequency, err)
+		}
 	}
 
 	return nil

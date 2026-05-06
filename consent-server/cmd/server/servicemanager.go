@@ -21,20 +21,20 @@ package main
 
 import (
 	"net/http"
+	"time"
 
 	"github.com/wso2/openfgc/internal/authresource"
 	"github.com/wso2/openfgc/internal/consent"
 	"github.com/wso2/openfgc/internal/consentelement"
 	"github.com/wso2/openfgc/internal/consentpurpose"
+	"github.com/wso2/openfgc/internal/system/config"
 	"github.com/wso2/openfgc/internal/system/healthcheck/handler"
 	"github.com/wso2/openfgc/internal/system/log"
 	"github.com/wso2/openfgc/internal/system/stores"
 )
 
 // registerServices registers all consent management services with the provided HTTP multiplexer.
-func registerServices(
-	mux *http.ServeMux,
-) {
+func registerServices(mux *http.ServeMux) {
 	logger := log.GetLogger()
 
 	// Create Store Registry with all stores
@@ -62,6 +62,36 @@ func registerServices(
 	// Register health check endpoints
 	registerHealthCheckEndpoints(mux)
 	logger.Debug("Health check endpoints registered")
+}
+
+// startBackgroundServices launches all background jobs as goroutines.
+// Called after registerServices so all stores and configs are fully initialized.
+func startBackgroundServices(cfg *config.Config, logger *log.Logger) {
+	if cfg.Consent.ExpirationFrequency == "" {
+		logger.Warn("Consent expiration frequency not configured, skipping scheduler")
+		return
+	}
+
+	interval, err := time.ParseDuration(cfg.Consent.ExpirationFrequency)
+	if err != nil {
+		logger.Error("Invalid consent expiration frequency, skipping scheduler",
+			log.String("value", cfg.Consent.ExpirationFrequency),
+			log.Error(err),
+		)
+		return
+	}
+
+	go consent.StartScheduler(
+		interval,
+		cfg.Consent.StatusMappings.ActiveStatus,
+		cfg.Consent.StatusMappings.ExpiredStatus,
+		cfg.Consent.AuthStatusMappings.ApprovedState, // ← added
+		cfg.Consent.AuthStatusMappings.SystemExpiredState,
+		cfg.Consent.AuthStatusMappings.SystemRevokedState,
+	)
+	logger.Info("Consent expiration scheduler started as background service",
+		log.String("interval", interval.String()),
+	)
 }
 
 // registerHealthCheckEndpoints registers the health check endpoints.

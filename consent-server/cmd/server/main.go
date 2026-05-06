@@ -80,6 +80,9 @@ func setupHTTPServer(cfg *config.Config, logger *log.Logger) *http.Server {
 	// Register all services
 	registerServices(mux)
 
+	// Start background services
+	startBackgroundServices(cfg, logger)
+
 	// Wrap with correlation ID middleware
 	httpHandler := middleware.WrapWithCorrelationID(mux)
 
