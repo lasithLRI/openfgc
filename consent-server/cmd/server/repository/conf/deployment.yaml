@@ -25,8 +25,7 @@ consent:
   expiration_frequency:
     frequency: "10s"
   eligible_statuses:
-    consent_statuses: ["ACTIVE", "CREATED"]
-    consent_auth_statuses: ["APPROVED", "CREATED"]
+    consent_statuses: ["ACTIVE", "CREATED", "REJECTED", "REVOKED"]
 
   status_mappings:
     # Status representing an active/authorized consent

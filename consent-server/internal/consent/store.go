@@ -100,7 +100,7 @@ var (
 		Query: "", // Built dynamically
 	}
 
-	// Purpose Consent queries
+	// Purpose consent queries
 	QueryCreateConsentPurposeMapping = dbmodel.DBQuery{
 		ID:            "CREATE_CONSENT_PURPOSE_MAPPING",
 		Query:         "INSERT INTO PURPOSE_CONSENT_MAPPING (CONSENT_ID, PURPOSE_ID, ORG_ID) VALUES (?, ?, ?)",
@@ -156,10 +156,10 @@ var (
 				pa.VALUE,
 				gm.IS_MANDATORY
 			FROM CONSENT_ELEMENT_APPROVAL pa
-		JOIN CONSENT_ELEMENT p ON pa.ELEMENT_ID = p.ID AND pa.ORG_ID = p.ORG_ID
-		JOIN CONSENT_PURPOSE pg ON pa.PURPOSE_ID = pg.ID AND pa.ORG_ID = pg.ORG_ID
-		JOIN PURPOSE_ELEMENT_MAPPING gm ON pa.PURPOSE_ID = gm.PURPOSE_ID
-			AND pa.ELEMENT_ID = gm.ELEMENT_ID AND pa.ORG_ID = gm.ORG_ID
+			JOIN CONSENT_ELEMENT p ON pa.ELEMENT_ID = p.ID AND pa.ORG_ID = p.ORG_ID
+			JOIN CONSENT_PURPOSE pg ON pa.PURPOSE_ID = pg.ID AND pa.ORG_ID = pg.ORG_ID
+			JOIN PURPOSE_ELEMENT_MAPPING gm ON pa.PURPOSE_ID = gm.PURPOSE_ID
+				AND pa.ELEMENT_ID = gm.ELEMENT_ID AND pa.ORG_ID = gm.ORG_ID
 			WHERE pa.CONSENT_ID = ? AND pa.ORG_ID = ?
 			ORDER BY pg.NAME, p.NAME
 		`,
@@ -174,10 +174,10 @@ var (
 				pa.VALUE,
 				gm.IS_MANDATORY
 			FROM CONSENT_ELEMENT_APPROVAL pa
-		JOIN CONSENT_ELEMENT p ON pa.ELEMENT_ID = p.ID AND pa.ORG_ID = p.ORG_ID
-		JOIN CONSENT_PURPOSE pg ON pa.PURPOSE_ID = pg.ID AND pa.ORG_ID = pg.ORG_ID
-		JOIN PURPOSE_ELEMENT_MAPPING gm ON pa.PURPOSE_ID = gm.PURPOSE_ID
-			AND pa.ELEMENT_ID = gm.ELEMENT_ID AND pa.ORG_ID = gm.ORG_ID
+			JOIN CONSENT_ELEMENT p ON pa.ELEMENT_ID = p.ID AND pa.ORG_ID = p.ORG_ID
+			JOIN CONSENT_PURPOSE pg ON pa.PURPOSE_ID = pg.ID AND pa.ORG_ID = pg.ORG_ID
+			JOIN PURPOSE_ELEMENT_MAPPING gm ON pa.PURPOSE_ID = gm.PURPOSE_ID
+				AND pa.ELEMENT_ID = gm.ELEMENT_ID AND pa.ORG_ID = gm.ORG_ID
 			WHERE pa.CONSENT_ID = $1 AND pa.ORG_ID = $2
 			ORDER BY pg.NAME, p.NAME
 		`,
@@ -195,23 +195,24 @@ var (
 		PostgresQuery: "DELETE FROM CONSENT_ELEMENT_APPROVAL WHERE CONSENT_ID = $1 AND ORG_ID = $2",
 	}
 
-	QuerySelectExpiredConsents = dbmodel.DBQuery{
-		ID:            "SELECT_EXPIRED_CONSENTS",
-		Query:         "SELECT CONSENT_ID FROM CONSENT WHERE VALIDITY_TIME < ? AND CURRENT_STATUS IN (?, ?)",
-		PostgresQuery: "SELECT CONSENT_ID FROM CONSENT WHERE VALIDITY_TIME < $1 AND CURRENT_STATUS IN ($2, $3)",
-	}
-
+	// QueryExpireConsent updates a single consent's status — no IN clause, kept as a static query.
 	QueryExpireConsent = dbmodel.DBQuery{
 		ID:            "EXPIRE_CONSENT",
 		Query:         "UPDATE CONSENT SET CURRENT_STATUS = ?, UPDATED_TIME = ? WHERE CONSENT_ID = ?",
 		PostgresQuery: "UPDATE CONSENT SET CURRENT_STATUS = $1, UPDATED_TIME = $2 WHERE CONSENT_ID = $3",
 	}
 
+	// QueryExpireConsentAuthResources updates all auth resources for a consent to system-expired.
 	QueryExpireConsentAuthResources = dbmodel.DBQuery{
 		ID:            "EXPIRE_CONSENT_AUTH_RESOURCES",
-		Query:         "UPDATE CONSENT_AUTH_RESOURCE SET AUTH_STATUS = ?, UPDATED_TIME = ? WHERE CONSENT_ID = ? AND AUTH_STATUS IN (?, ?)",
-		PostgresQuery: "UPDATE CONSENT_AUTH_RESOURCE SET AUTH_STATUS = $1, UPDATED_TIME = $2 WHERE CONSENT_ID = $3 AND AUTH_STATUS IN ($4, $5)",
+		Query:         "UPDATE CONSENT_AUTH_RESOURCE SET AUTH_STATUS = ?, UPDATED_TIME = ? WHERE CONSENT_ID = ?",
+		PostgresQuery: "UPDATE CONSENT_AUTH_RESOURCE SET AUTH_STATUS = $1, UPDATED_TIME = $2 WHERE CONSENT_ID = $3",
 	}
+
+	// NOTE: QuerySelectExpiredConsents has been removed.
+	// It uses a variable-length IN clause whose size depends on runtime configuration
+	// (eligible status lists from deployment.yaml). It is built dynamically inside
+	// GetExpiredConsentIDs using buildInClause.
 )
 
 // store implements the interfaces.ConsentStore interface
@@ -278,12 +279,11 @@ func (s *store) Search(ctx context.Context, filters model.ConsentSearchFilters) 
 		whereConditions = append(whereConditions, fmt.Sprintf("CONSENT.CONSENT_TYPE IN (%s)", strings.Join(placeholders, ",")))
 	}
 
-	// Add consentStatuses filter (IN clause) - convert to uppercase
+	// Add consentStatuses filter (IN clause) — convert to uppercase to match DB values
 	if len(filters.ConsentStatuses) > 0 {
 		placeholders := make([]string, len(filters.ConsentStatuses))
 		for i, status := range filters.ConsentStatuses {
 			placeholders[i] = "?"
-			// Convert to uppercase to match DB values (ACTIVE, REJECTED, etc.)
 			args = append(args, strings.ToUpper(status))
 			countArgs = append(countArgs, strings.ToUpper(status))
 		}
@@ -327,7 +327,7 @@ func (s *store) Search(ctx context.Context, filters model.ConsentSearchFilters) 
 		whereConditions = append(whereConditions, fmt.Sprintf("cp.NAME IN (%s)", strings.Join(placeholders, ",")))
 	}
 
-	// Add time range filters (timestamps in milliseconds) - filter by UPDATED_TIME
+	// Add time range filters (timestamps in milliseconds) — filter by UPDATED_TIME
 	if filters.FromTime != nil {
 		whereConditions = append(whereConditions, "CONSENT.UPDATED_TIME >= ?")
 		args = append(args, *filters.FromTime)
@@ -342,11 +342,10 @@ func (s *store) Search(ctx context.Context, filters model.ConsentSearchFilters) 
 
 	whereClause := strings.Join(whereConditions, " AND ")
 
-	// Build COUNT query
+	// Build and execute COUNT query
 	countQuery := fmt.Sprintf("SELECT COUNT(DISTINCT CONSENT.CONSENT_ID) as count FROM CONSENT%s WHERE %s",
 		joinClause, whereClause)
 
-	// Execute count query
 	countRows, err := dbClient.Query(dbmodel.DBQuery{
 		ID:            "COUNT_SEARCH_RESULTS",
 		Query:         countQuery,
@@ -375,10 +374,8 @@ func (s *store) Search(ctx context.Context, filters model.ConsentSearchFilters) 
 		whereClause,
 	)
 
-	// Add pagination parameters
 	args = append(args, filters.Limit, filters.Offset)
 
-	// Execute search query
 	rows, err := dbClient.Query(dbmodel.DBQuery{
 		ID:            "SEARCH_CONSENTS",
 		Query:         selectQuery,
@@ -473,7 +470,6 @@ func (s *store) GetAttributesByConsentIDs(ctx context.Context, consentIDs []stri
 		return nil, fmt.Errorf("failed to get database client: %w", err)
 	}
 
-	// Build placeholders for IN clause
 	placeholders := ""
 	args := make([]interface{}, 0, len(consentIDs)+1)
 	for i, id := range consentIDs {
@@ -485,7 +481,6 @@ func (s *store) GetAttributesByConsentIDs(ctx context.Context, consentIDs []stri
 	}
 	args = append(args, orgID)
 
-	// Build dynamic query
 	mysqlQuery := fmt.Sprintf("SELECT CONSENT_ID, ATT_KEY, ATT_VALUE, ORG_ID FROM CONSENT_ATTRIBUTE WHERE CONSENT_ID IN (%s) AND ORG_ID = ?", placeholders)
 	query := dbmodel.DBQuery{
 		ID:            QueryGetAttributesByConsentIDs.ID,
@@ -498,7 +493,6 @@ func (s *store) GetAttributesByConsentIDs(ctx context.Context, consentIDs []stri
 		return nil, err
 	}
 
-	// Group attributes by consent ID
 	result := make(map[string]map[string]string)
 	for _, row := range rows {
 		attribute := mapToConsentAttribute(row)
@@ -571,45 +565,6 @@ func (s *store) CreateStatusAudit(tx dbmodel.TxInterface, audit *model.ConsentSt
 	return err
 }
 
-// Mapper functions
-
-// mapToConsent converts a database row map to Consent
-// Note: DBClient normalizes column names to lowercase
-func mapToConsent(row map[string]interface{}) *model.Consent {
-	if row == nil {
-		return nil
-	}
-
-	return &model.Consent{
-		ConsentID:                  getString(row, "consent_id"),
-		CreatedTime:                getInt64(row, "created_time"),
-		UpdatedTime:                getInt64(row, "updated_time"),
-		ClientID:                   getString(row, "client_id"),
-		ConsentType:                getString(row, "consent_type"),
-		CurrentStatus:              getString(row, "current_status"),
-		ConsentFrequency:           getIntPointer(row, "consent_frequency"),
-		ValidityTime:               getInt64Pointer(row, "validity_time"),
-		RecurringIndicator:         getBoolPointer(row, "recurring_indicator"),
-		DataAccessValidityDuration: getInt64Pointer(row, "data_access_validity_duration"),
-		OrgID:                      getString(row, "org_id"),
-	}
-}
-
-// mapToConsentAttribute converts a database row map to ConsentAttribute
-// Note: DBClient normalizes column names to lowercase
-func mapToConsentAttribute(row map[string]interface{}) *model.ConsentAttribute {
-	if row == nil {
-		return nil
-	}
-
-	return &model.ConsentAttribute{
-		ConsentID: getString(row, "consent_id"),
-		AttKey:    getString(row, "att_key"),
-		AttValue:  getString(row, "att_value"),
-		OrgID:     getString(row, "org_id"),
-	}
-}
-
 // CreateConsentPurposeMapping links a consent to a purpose
 func (s *store) CreateConsentPurposeMapping(tx dbmodel.TxInterface, consentID, purposeID, orgID string) error {
 	_, err := tx.Exec(QueryCreateConsentPurposeMapping, consentID, purposeID, orgID)
@@ -676,7 +631,7 @@ func (s *store) CreatePurposeElementApproval(tx dbmodel.TxInterface, approval *m
 		approval.PurposeID,
 		approval.ElementID,
 		approval.IsUserApproved,
-		approval.Value, // JSON string or nil
+		approval.Value,
 		approval.OrgID,
 	)
 	return err
@@ -725,7 +680,103 @@ func (s *store) DeletePurposeElementApprovalsByConsentID(tx dbmodel.TxInterface,
 	return err
 }
 
-// Helper functions for type conversion
+// GetExpiredConsentIDs returns consent IDs whose VALIDITY_TIME has passed and are in an expirable status.
+// The IN clause is built dynamically from expirableStatuses so it works for any number of configured statuses.
+func (s *store) GetExpiredConsentIDs(nowMs int64, expirableStatuses []string) ([]string, error) {
+	dbClient, err := s.getDBClient()
+	if err != nil {
+		return nil, fmt.Errorf("failed to get database client: %w", err)
+	}
+
+	placeholders, statusArgs := buildInClause(expirableStatuses)
+	args := append([]interface{}{nowMs}, statusArgs...)
+
+	mysqlQuery := fmt.Sprintf(
+		"SELECT CONSENT_ID FROM CONSENT WHERE VALIDITY_TIME < ? AND CURRENT_STATUS IN (%s)",
+		placeholders,
+	)
+	query := dbmodel.DBQuery{
+		ID:            "SELECT_EXPIRED_CONSENTS",
+		Query:         mysqlQuery,
+		PostgresQuery: dbutils.ConvertToPostgresParams(mysqlQuery),
+	}
+
+	rows, err := dbClient.Query(query, args...)
+	if err != nil {
+		return nil, err
+	}
+
+	consentIDs := make([]string, 0, len(rows))
+	for _, row := range rows {
+		if id := getString(row, "consent_id"); id != "" {
+			consentIDs = append(consentIDs, id)
+		}
+	}
+	return consentIDs, nil
+}
+
+// ExpireConsent marks a single consent as expired and transitions all its auth resources
+// to the system-expired state.
+func (s *store) ExpireConsent(nowMs int64, consentID, expiredStatus, systemExpiredAuthStatus string) error {
+	dbClient, err := s.getDBClient()
+	if err != nil {
+		return fmt.Errorf("failed to get database client: %w", err)
+	}
+
+	_, err = dbClient.Execute(QueryExpireConsent, expiredStatus, nowMs, consentID)
+	if err != nil {
+		return fmt.Errorf("failed to expire consent: %w", err)
+	}
+
+	_, err = dbClient.Execute(QueryExpireConsentAuthResources, systemExpiredAuthStatus, nowMs, consentID)
+	if err != nil {
+		return fmt.Errorf("failed to expire consent auth resources: %w", err)
+	}
+
+	return nil
+}
+
+// ── Mapper functions ──────────────────────────────────────────────────────────
+
+// mapToConsent converts a database row map to Consent.
+// Note: DBClient normalizes column names to lowercase.
+func mapToConsent(row map[string]interface{}) *model.Consent {
+	if row == nil {
+		return nil
+	}
+
+	return &model.Consent{
+		ConsentID:                  getString(row, "consent_id"),
+		CreatedTime:                getInt64(row, "created_time"),
+		UpdatedTime:                getInt64(row, "updated_time"),
+		ClientID:                   getString(row, "client_id"),
+		ConsentType:                getString(row, "consent_type"),
+		CurrentStatus:              getString(row, "current_status"),
+		ConsentFrequency:           getIntPointer(row, "consent_frequency"),
+		ValidityTime:               getInt64Pointer(row, "validity_time"),
+		RecurringIndicator:         getBoolPointer(row, "recurring_indicator"),
+		DataAccessValidityDuration: getInt64Pointer(row, "data_access_validity_duration"),
+		OrgID:                      getString(row, "org_id"),
+	}
+}
+
+// mapToConsentAttribute converts a database row map to ConsentAttribute.
+// Note: DBClient normalizes column names to lowercase.
+func mapToConsentAttribute(row map[string]interface{}) *model.ConsentAttribute {
+	if row == nil {
+		return nil
+	}
+
+	return &model.ConsentAttribute{
+		ConsentID: getString(row, "consent_id"),
+		AttKey:    getString(row, "att_key"),
+		AttValue:  getString(row, "att_value"),
+		OrgID:     getString(row, "org_id"),
+	}
+}
+
+// ── Helper functions for type conversion ─────────────────────────────────────
+
 func getString(row map[string]interface{}, key string) string {
 	if val, ok := row[key].(string); ok {
 		return val
@@ -736,8 +787,8 @@ func getString(row map[string]interface{}, key string) string {
 	return ""
 }
 
-// getInt64 safely extracts an int64 value from a database row map
-// Handles various types returned by different DB drivers
+// getInt64 safely extracts an int64 value from a database row map.
+// Handles various types returned by different DB drivers.
 func getInt64(row map[string]interface{}, key string) int64 {
 	val := row[key]
 	if val == nil {
@@ -753,7 +804,7 @@ func getInt64(row map[string]interface{}, key string) int64 {
 		return int64(v)
 	case float64:
 		return int64(v)
-	case []uint8: // byte slice
+	case []uint8:
 		if parsed, err := strconv.ParseInt(string(v), 10, 64); err == nil {
 			return parsed
 		}
@@ -803,13 +854,11 @@ func getInt64Pointer(row map[string]interface{}, key string) *int64 {
 	switch v := val.(type) {
 	case int64:
 		return &v
-	case []byte: // Also handles []uint8 since they're the same type
-		// Handle MySQL driver []byte/[]uint8 results
+	case []byte:
 		if len(v) == 0 {
 			return nil
 		}
-		str := string(v)
-		if parsed, err := strconv.ParseInt(str, 10, 64); err == nil {
+		if parsed, err := strconv.ParseInt(string(v), 10, 64); err == nil {
 			return &parsed
 		}
 		return nil
@@ -827,13 +876,11 @@ func getIntPointer(row map[string]interface{}, key string) *int {
 	case int64:
 		result := int(v)
 		return &result
-	case []byte: // Also handles []uint8 since they're the same type
-		// Handle MySQL driver []byte/[]uint8 results
+	case []byte:
 		if len(v) == 0 {
 			return nil
 		}
-		str := string(v)
-		if parsed, err := strconv.ParseInt(str, 10, 64); err == nil {
+		if parsed, err := strconv.ParseInt(string(v), 10, 64); err == nil {
 			result := int(parsed)
 			return &result
 		}
@@ -853,8 +900,8 @@ func getStringPointer(row map[string]interface{}, key string) *string {
 	return nil
 }
 
-// buildInClause builds "?, ?, ?" placeholders and a matching []interface{} args slice.
-// Used for safe parameterized IN clauses — no SQL injection risk.
+// buildInClause builds a "?, ?, ?" placeholder string and a matching []interface{} args slice
+// for safe parameterized IN clauses — no SQL injection risk.
 func buildInClause(values []string) (string, []interface{}) {
 	placeholders := make([]string, len(values))
 	args := make([]interface{}, len(values))
@@ -863,62 +910,4 @@ func buildInClause(values []string) (string, []interface{}) {
 		args[i] = v
 	}
 	return strings.Join(placeholders, ", "), args
-}
-
-// GetExpiredConsentIDs returns consent IDs whose validity has passed and are in an expirable status.
-func (s *store) GetExpiredConsentIDs(nowMs int64, expirableStatuses []string) ([]string, error) {
-	dbClient, err := s.getDBClient()
-	if err != nil {
-		return nil, fmt.Errorf("failed to get database client: %w", err)
-	}
-
-	placeholders, statusArgs := buildInClause(expirableStatuses)
-	args := append([]interface{}{nowMs}, statusArgs...)
-
-	query := dbmodel.DBQuery{
-		ID:            "SELECT_EXPIRED_CONSENTS",
-		Query:         fmt.Sprintf("SELECT CONSENT_ID FROM CONSENT WHERE VALIDITY_TIME < ? AND CURRENT_STATUS IN (%s)", placeholders),
-		PostgresQuery: dbutils.ConvertToPostgresParams(fmt.Sprintf("SELECT CONSENT_ID FROM CONSENT WHERE VALIDITY_TIME < ? AND CURRENT_STATUS IN (%s)", placeholders)),
-	}
-
-	rows, err := dbClient.Query(query, args...)
-	if err != nil {
-		return nil, err
-	}
-
-	consentIDs := make([]string, 0, len(rows))
-	for _, row := range rows {
-		if id := getString(row, "consent_id"); id != "" {
-			consentIDs = append(consentIDs, id)
-		}
-	}
-	return consentIDs, nil
-}
-
-// ExpireConsent marks a consent and its active auth resources as system-expired.
-func (s *store) ExpireConsent(nowMs int64, consentID, expiredStatus, systemExpiredAuthStatus string, expirableAuthStatuses []string) error {
-	dbClient, err := s.getDBClient()
-	if err != nil {
-		return fmt.Errorf("failed to get database client: %w", err)
-	}
-
-	_, err = dbClient.Execute(QueryExpireConsent, expiredStatus, nowMs, consentID)
-	if err != nil {
-		return fmt.Errorf("failed to expire consent: %w", err)
-	}
-
-	placeholders, statusArgs := buildInClause(expirableAuthStatuses)
-	authQuery := dbmodel.DBQuery{
-		ID:            "EXPIRE_CONSENT_AUTH_RESOURCES",
-		Query:         fmt.Sprintf("UPDATE CONSENT_AUTH_RESOURCE SET AUTH_STATUS = ?, UPDATED_TIME = ? WHERE CONSENT_ID = ? AND AUTH_STATUS IN (%s)", placeholders),
-		PostgresQuery: dbutils.ConvertToPostgresParams(fmt.Sprintf("UPDATE CONSENT_AUTH_RESOURCE SET AUTH_STATUS = ?, UPDATED_TIME = ? WHERE CONSENT_ID = ? AND AUTH_STATUS IN (%s)", placeholders)),
-	}
-
-	args := append([]interface{}{systemExpiredAuthStatus, nowMs, consentID}, statusArgs...)
-	_, err = dbClient.Execute(authQuery, args...)
-	if err != nil {
-		return fmt.Errorf("failed to expire consent auth resources: %w", err)
-	}
-
-	return nil
 }

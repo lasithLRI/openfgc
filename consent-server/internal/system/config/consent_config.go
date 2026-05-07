@@ -39,8 +39,7 @@ type ExpirationFrequencyConfig struct {
 
 // EligibleStatusesConfig holds the eligible status lists for the expiration scheduler.
 type EligibleStatusesConfig struct {
-	ConsentStatuses     []string `yaml:"consent_statuses"`
-	ConsentAuthStatuses []string `yaml:"consent_auth_statuses"`
+	ConsentStatuses []string `yaml:"consent_statuses"`
 }
 
 // ConsentStatusMappings holds the mapping of specific consent lifecycle states.

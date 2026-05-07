@@ -86,17 +86,11 @@ func startBackgroundServices(cfg *config.Config, logger *log.Logger) {
 		return
 	}
 
-	if len(cfg.Consent.EligibleStatuses.ConsentAuthStatuses) == 0 {
-		logger.Warn("No eligible auth statuses configured for expiration, skipping scheduler")
-		return
-	}
-
 	go consent.StartScheduler(
 		interval,
 		consent.ExpirationStatuses{
 			ExpirableConsentStatuses: cfg.Consent.EligibleStatuses.ConsentStatuses,
 			ExpiredConsentStatus:     cfg.Consent.StatusMappings.ExpiredStatus,
-			ExpirableAuthStatuses:    cfg.Consent.EligibleStatuses.ConsentAuthStatuses,
 			SystemExpiredAuthStatus:  cfg.Consent.AuthStatusMappings.SystemExpiredState,
 		},
 	)
@@ -104,7 +98,7 @@ func startBackgroundServices(cfg *config.Config, logger *log.Logger) {
 	logger.Info("Consent expiration scheduler started as background service",
 		log.String("interval", interval.String()),
 		log.Any("eligible_consent_statuses", cfg.Consent.EligibleStatuses.ConsentStatuses),
-		log.Any("eligible_auth_statuses", cfg.Consent.EligibleStatuses.ConsentAuthStatuses),
+		log.String("system_expired_auth_status", cfg.Consent.AuthStatusMappings.SystemExpiredState),
 	)
 }
 
