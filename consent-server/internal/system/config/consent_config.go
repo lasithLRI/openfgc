@@ -11,9 +11,9 @@
  * Unless required by applicable law or agreed to in writing,
  * software distributed under the License is distributed on an
  * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
- * KIND, either express or CONDITIONS OF ANY KIND, either express or
- * implied. See the License for the specific language governing
- * permissions and limitations under the License.
+ * KIND, either express or implied. See the License for the
+ * specific language governing permissions and limitations
+ * under the License.
  */
 
 package config
@@ -26,9 +26,21 @@ type AuthStatus string
 
 // ConsentConfig holds consent-related configuration.
 type ConsentConfig struct {
-	ExpirationFrequency string                `yaml:"expiration_frequency"`
-	StatusMappings      ConsentStatusMappings `yaml:"status_mappings"`
-	AuthStatusMappings  AuthStatusMappings    `yaml:"auth_status_mappings"`
+	ExpirationFrequency ExpirationFrequencyConfig `yaml:"expiration_frequency"`
+	EligibleStatuses    EligibleStatusesConfig    `yaml:"eligible_statuses"`
+	StatusMappings      ConsentStatusMappings     `yaml:"status_mappings"`
+	AuthStatusMappings  AuthStatusMappings        `yaml:"auth_status_mappings"`
+}
+
+// ExpirationFrequencyConfig holds the expiration scheduler timing configuration.
+type ExpirationFrequencyConfig struct {
+	Frequency string `yaml:"frequency"`
+}
+
+// EligibleStatusesConfig holds the eligible status lists for the expiration scheduler.
+type EligibleStatusesConfig struct {
+	ConsentStatuses     []string `yaml:"consent_statuses"`
+	ConsentAuthStatuses []string `yaml:"consent_auth_statuses"`
 }
 
 // ConsentStatusMappings holds the mapping of specific consent lifecycle states.

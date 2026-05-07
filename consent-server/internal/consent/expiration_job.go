@@ -1,21 +1,3 @@
-/*
- * Copyright (c) 2026, WSO2 LLC. (https://www.wso2.com).
- *
- * WSO2 LLC. licenses this file to you under the Apache License,
- * Version 2.0 (the "License"); you may not use this file except
- * in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing,
- * software distributed under the License is distributed on an
- * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
- * KIND, either express or implied.  See the License for the
- * specific language governing permissions and limitations
- * under the License.
- */
-
 package consent
 
 import (
@@ -24,47 +6,37 @@ import (
 	"github.com/wso2/openfgc/internal/system/log"
 )
 
-// var (
-// 	QuerySelectExpiredConsents = dbmodel.DBQuery{
-// 		ID:            "SELECT_EXPIRED_CONSENTS",
-// 		Query:         "SELECT CONSENT_ID FROM CONSENT WHERE VALIDITY_TIME < ? AND CURRENT_STATUS IN (?)",
-// 		PostgresQuery: "SELECT CONSENT_ID FROM CONSENT WHERE VALIDITY_TIME < $1 AND CURRENT_STATUS IN ($2)",
-// 	}
-
-// 	QueryExpireConsent = dbmodel.DBQuery{
-// 		ID:            "EXPIRE_CONSENT",
-// 		Query:         "UPDATE CONSENT SET CURRENT_STATUS = ?, UPDATED_TIME = ? WHERE CONSENT_ID = ?",
-// 		PostgresQuery: "UPDATE CONSENT SET CURRENT_STATUS = $1, UPDATED_TIME = $2 WHERE CONSENT_ID = $3",
-// 	}
-
-// 	QueryExpireConsentAuthResources = dbmodel.DBQuery{
-// 		ID:            "EXPIRE_CONSENT_AUTH_RESOURCES",
-// 		Query:         "UPDATE CONSENT_AUTH_RESOURCE SET AUTH_STATUS = ?, UPDATED_TIME = ? WHERE CONSENT_ID = ? AND AUTH_STATUS IN (?)",
-// 		PostgresQuery: "UPDATE CONSENT_AUTH_RESOURCE SET AUTH_STATUS = $1, UPDATED_TIME = $2 WHERE CONSENT_ID = $3 AND AUTH_STATUS IN ($4)",
-// 	}
-// )
-
 // RunExpirationJob finds consents whose VALIDITY_TIME has passed and marks them as expired.
-func RunExpirationJob(activeStatus, expiredStatus, createdStatus, approvedAuthStatus, createdAuthStatus, systemExpiredAuthStatus string) {
+func RunExpirationJob(statuses ExpirationStatuses) {
 	logger := log.GetLogger().With(log.String(log.LoggerKeyComponentName, "ConsentExpirationJob"))
+
+	// Catch any silent panics so the scheduler goroutine is never killed
+	defer func() {
+		if r := recover(); r != nil {
+			logger.Error("Panic recovered in expiration job", log.Any("panic", r))
+		}
+	}()
+
+	logger.Debug("Running consent expiration job")
 
 	s := &store{}
 	nowMs := time.Now().UnixMilli()
 
-	consentIDs, err := s.GetExpiredConsentIDs(nowMs, activeStatus, createdStatus)
+	consentIDs, err := s.GetExpiredConsentIDs(nowMs, statuses.ExpirableConsentStatuses)
 	if err != nil {
 		logger.Error("Failed to query expired consents", log.Error(err))
 		return
 	}
 
 	if len(consentIDs) == 0 {
+		logger.Debug("No consents to expire")
 		return
 	}
 
 	logger.Info("Found consents to expire", log.Int("count", len(consentIDs)))
 
 	for _, consentID := range consentIDs {
-		err := s.ExpireConsent(nowMs, consentID, expiredStatus, systemExpiredAuthStatus, approvedAuthStatus, createdAuthStatus)
+		err := s.ExpireConsent(nowMs, consentID, statuses.ExpiredConsentStatus, statuses.SystemExpiredAuthStatus, statuses.ExpirableAuthStatuses)
 		if err != nil {
 			logger.Error("Failed to expire consent", log.Error(err), log.String("consent_id", consentID))
 			continue

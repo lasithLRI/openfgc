@@ -230,10 +230,10 @@ func validateConsentConfig(c *ConsentConfig) error {
 	if c.AuthStatusMappings.SystemRevokedState == "" {
 		return fmt.Errorf("auth system revoked status mapping is required")
 	}
-	if c.ExpirationFrequency != "" {
-		if _, err := time.ParseDuration(c.ExpirationFrequency); err != nil {
+	if c.ExpirationFrequency.Frequency != "" {
+		if _, err := time.ParseDuration(c.ExpirationFrequency.Frequency); err != nil {
 			return fmt.Errorf("invalid consent expiration_frequency %q: must be a valid duration (e.g. '5m', '1h'): %w",
-				c.ExpirationFrequency, err)
+				c.ExpirationFrequency.Frequency, err)
 		}
 	}
 	return nil

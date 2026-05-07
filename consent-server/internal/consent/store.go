@@ -853,14 +853,35 @@ func getStringPointer(row map[string]interface{}, key string) *string {
 	return nil
 }
 
+// buildInClause builds "?, ?, ?" placeholders and a matching []interface{} args slice.
+// Used for safe parameterized IN clauses — no SQL injection risk.
+func buildInClause(values []string) (string, []interface{}) {
+	placeholders := make([]string, len(values))
+	args := make([]interface{}, len(values))
+	for i, v := range values {
+		placeholders[i] = "?"
+		args[i] = v
+	}
+	return strings.Join(placeholders, ", "), args
+}
+
 // GetExpiredConsentIDs returns consent IDs whose validity has passed and are in an expirable status.
-func (s *store) GetExpiredConsentIDs(nowMs int64, activeStatus, createdStatus string) ([]string, error) {
+func (s *store) GetExpiredConsentIDs(nowMs int64, expirableStatuses []string) ([]string, error) {
 	dbClient, err := s.getDBClient()
 	if err != nil {
 		return nil, fmt.Errorf("failed to get database client: %w", err)
 	}
 
-	rows, err := dbClient.Query(QuerySelectExpiredConsents, nowMs, activeStatus, createdStatus)
+	placeholders, statusArgs := buildInClause(expirableStatuses)
+	args := append([]interface{}{nowMs}, statusArgs...)
+
+	query := dbmodel.DBQuery{
+		ID:            "SELECT_EXPIRED_CONSENTS",
+		Query:         fmt.Sprintf("SELECT CONSENT_ID FROM CONSENT WHERE VALIDITY_TIME < ? AND CURRENT_STATUS IN (%s)", placeholders),
+		PostgresQuery: dbutils.ConvertToPostgresParams(fmt.Sprintf("SELECT CONSENT_ID FROM CONSENT WHERE VALIDITY_TIME < ? AND CURRENT_STATUS IN (%s)", placeholders)),
+	}
+
+	rows, err := dbClient.Query(query, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -875,7 +896,7 @@ func (s *store) GetExpiredConsentIDs(nowMs int64, activeStatus, createdStatus st
 }
 
 // ExpireConsent marks a consent and its active auth resources as system-expired.
-func (s *store) ExpireConsent(nowMs int64, consentID, expiredStatus, systemExpiredAuthStatus, approvedAuthStatus, createdAuthStatus string) error {
+func (s *store) ExpireConsent(nowMs int64, consentID, expiredStatus, systemExpiredAuthStatus string, expirableAuthStatuses []string) error {
 	dbClient, err := s.getDBClient()
 	if err != nil {
 		return fmt.Errorf("failed to get database client: %w", err)
@@ -886,10 +907,15 @@ func (s *store) ExpireConsent(nowMs int64, consentID, expiredStatus, systemExpir
 		return fmt.Errorf("failed to expire consent: %w", err)
 	}
 
-	_, err = dbClient.Execute(QueryExpireConsentAuthResources,
-		systemExpiredAuthStatus, nowMs, consentID,
-		approvedAuthStatus, createdAuthStatus,
-	)
+	placeholders, statusArgs := buildInClause(expirableAuthStatuses)
+	authQuery := dbmodel.DBQuery{
+		ID:            "EXPIRE_CONSENT_AUTH_RESOURCES",
+		Query:         fmt.Sprintf("UPDATE CONSENT_AUTH_RESOURCE SET AUTH_STATUS = ?, UPDATED_TIME = ? WHERE CONSENT_ID = ? AND AUTH_STATUS IN (%s)", placeholders),
+		PostgresQuery: dbutils.ConvertToPostgresParams(fmt.Sprintf("UPDATE CONSENT_AUTH_RESOURCE SET AUTH_STATUS = ?, UPDATED_TIME = ? WHERE CONSENT_ID = ? AND AUTH_STATUS IN (%s)", placeholders)),
+	}
+
+	args := append([]interface{}{systemExpiredAuthStatus, nowMs, consentID}, statusArgs...)
+	_, err = dbClient.Execute(authQuery, args...)
 	if err != nil {
 		return fmt.Errorf("failed to expire consent auth resources: %w", err)
 	}

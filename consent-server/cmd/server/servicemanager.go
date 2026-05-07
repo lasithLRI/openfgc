@@ -67,32 +67,44 @@ func registerServices(mux *http.ServeMux) {
 // startBackgroundServices launches all background jobs as goroutines.
 // Called after registerServices so all stores and configs are fully initialized.
 func startBackgroundServices(cfg *config.Config, logger *log.Logger) {
-	if cfg.Consent.ExpirationFrequency == "" {
+	if cfg.Consent.ExpirationFrequency.Frequency == "" {
 		logger.Warn("Consent expiration frequency not configured, skipping scheduler")
 		return
 	}
 
-	interval, err := time.ParseDuration(cfg.Consent.ExpirationFrequency)
+	interval, err := time.ParseDuration(cfg.Consent.ExpirationFrequency.Frequency)
 	if err != nil {
 		logger.Error("Invalid consent expiration frequency, skipping scheduler",
-			log.String("value", cfg.Consent.ExpirationFrequency),
+			log.String("value", cfg.Consent.ExpirationFrequency.Frequency),
 			log.Error(err),
 		)
 		return
 	}
 
+	if len(cfg.Consent.EligibleStatuses.ConsentStatuses) == 0 {
+		logger.Warn("No eligible consent statuses configured for expiration, skipping scheduler")
+		return
+	}
+
+	if len(cfg.Consent.EligibleStatuses.ConsentAuthStatuses) == 0 {
+		logger.Warn("No eligible auth statuses configured for expiration, skipping scheduler")
+		return
+	}
+
 	go consent.StartScheduler(
 		interval,
-		cfg.Consent.StatusMappings.ActiveStatus,
-		cfg.Consent.StatusMappings.ExpiredStatus,
-		cfg.Consent.StatusMappings.CreatedStatus,
-		cfg.Consent.AuthStatusMappings.ApprovedState,
-		cfg.Consent.AuthStatusMappings.CreatedState,
-		cfg.Consent.AuthStatusMappings.SystemExpiredState,
-		cfg.Consent.AuthStatusMappings.SystemRevokedState,
+		consent.ExpirationStatuses{
+			ExpirableConsentStatuses: cfg.Consent.EligibleStatuses.ConsentStatuses,
+			ExpiredConsentStatus:     cfg.Consent.StatusMappings.ExpiredStatus,
+			ExpirableAuthStatuses:    cfg.Consent.EligibleStatuses.ConsentAuthStatuses,
+			SystemExpiredAuthStatus:  cfg.Consent.AuthStatusMappings.SystemExpiredState,
+		},
 	)
+
 	logger.Info("Consent expiration scheduler started as background service",
 		log.String("interval", interval.String()),
+		log.Any("eligible_consent_statuses", cfg.Consent.EligibleStatuses.ConsentStatuses),
+		log.Any("eligible_auth_statuses", cfg.Consent.EligibleStatuses.ConsentAuthStatuses),
 	)
 }
 
