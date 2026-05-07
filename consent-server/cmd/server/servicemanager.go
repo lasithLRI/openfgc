@@ -85,7 +85,9 @@ func startBackgroundServices(cfg *config.Config, logger *log.Logger) {
 		interval,
 		cfg.Consent.StatusMappings.ActiveStatus,
 		cfg.Consent.StatusMappings.ExpiredStatus,
-		cfg.Consent.AuthStatusMappings.ApprovedState, // ← added
+		cfg.Consent.StatusMappings.CreatedStatus,
+		cfg.Consent.AuthStatusMappings.ApprovedState,
+		cfg.Consent.AuthStatusMappings.CreatedState,
 		cfg.Consent.AuthStatusMappings.SystemExpiredState,
 		cfg.Consent.AuthStatusMappings.SystemRevokedState,
 	)

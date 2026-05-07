@@ -110,7 +110,7 @@ var (
 	QueryGetConsentPurposesByConsentID = dbmodel.DBQuery{
 		ID: "GET_PURPOSES_BY_CONSENT_ID",
 		Query: `
-			SELECT 
+			SELECT
 				pgc.CONSENT_ID,
 				pgc.PURPOSE_ID,
 				pg.NAME as PURPOSE_NAME
@@ -120,7 +120,7 @@ var (
 			ORDER BY pg.NAME
 		`,
 		PostgresQuery: `
-			SELECT 
+			SELECT
 				pgc.CONSENT_ID,
 				pgc.PURPOSE_ID,
 				pg.NAME as PURPOSE_NAME
@@ -146,7 +146,7 @@ var (
 	QueryGetElementApprovalsByConsentID = dbmodel.DBQuery{
 		ID: "GET_ELEMENT_APPROVALS_BY_CONSENT_ID",
 		Query: `
-			SELECT 
+			SELECT
 				pa.CONSENT_ID,
 				pa.PURPOSE_ID,
 				pg.NAME as PURPOSE_NAME,
@@ -158,13 +158,13 @@ var (
 			FROM CONSENT_ELEMENT_APPROVAL pa
 		JOIN CONSENT_ELEMENT p ON pa.ELEMENT_ID = p.ID AND pa.ORG_ID = p.ORG_ID
 		JOIN CONSENT_PURPOSE pg ON pa.PURPOSE_ID = pg.ID AND pa.ORG_ID = pg.ORG_ID
-		JOIN PURPOSE_ELEMENT_MAPPING gm ON pa.PURPOSE_ID = gm.PURPOSE_ID 
+		JOIN PURPOSE_ELEMENT_MAPPING gm ON pa.PURPOSE_ID = gm.PURPOSE_ID
 			AND pa.ELEMENT_ID = gm.ELEMENT_ID AND pa.ORG_ID = gm.ORG_ID
 			WHERE pa.CONSENT_ID = ? AND pa.ORG_ID = ?
 			ORDER BY pg.NAME, p.NAME
 		`,
 		PostgresQuery: `
-			SELECT 
+			SELECT
 				pa.CONSENT_ID,
 				pa.PURPOSE_ID,
 				pg.NAME as PURPOSE_NAME,
@@ -176,7 +176,7 @@ var (
 			FROM CONSENT_ELEMENT_APPROVAL pa
 		JOIN CONSENT_ELEMENT p ON pa.ELEMENT_ID = p.ID AND pa.ORG_ID = p.ORG_ID
 		JOIN CONSENT_PURPOSE pg ON pa.PURPOSE_ID = pg.ID AND pa.ORG_ID = pg.ORG_ID
-		JOIN PURPOSE_ELEMENT_MAPPING gm ON pa.PURPOSE_ID = gm.PURPOSE_ID 
+		JOIN PURPOSE_ELEMENT_MAPPING gm ON pa.PURPOSE_ID = gm.PURPOSE_ID
 			AND pa.ELEMENT_ID = gm.ELEMENT_ID AND pa.ORG_ID = gm.ORG_ID
 			WHERE pa.CONSENT_ID = $1 AND pa.ORG_ID = $2
 			ORDER BY pg.NAME, p.NAME
@@ -193,6 +193,24 @@ var (
 		ID:            "DELETE_ELEMENT_APPROVALS_BY_CONSENT_ID",
 		Query:         "DELETE FROM CONSENT_ELEMENT_APPROVAL WHERE CONSENT_ID = ? AND ORG_ID = ?",
 		PostgresQuery: "DELETE FROM CONSENT_ELEMENT_APPROVAL WHERE CONSENT_ID = $1 AND ORG_ID = $2",
+	}
+
+	QuerySelectExpiredConsents = dbmodel.DBQuery{
+		ID:            "SELECT_EXPIRED_CONSENTS",
+		Query:         "SELECT CONSENT_ID FROM CONSENT WHERE VALIDITY_TIME < ? AND CURRENT_STATUS IN (?, ?)",
+		PostgresQuery: "SELECT CONSENT_ID FROM CONSENT WHERE VALIDITY_TIME < $1 AND CURRENT_STATUS IN ($2, $3)",
+	}
+
+	QueryExpireConsent = dbmodel.DBQuery{
+		ID:            "EXPIRE_CONSENT",
+		Query:         "UPDATE CONSENT SET CURRENT_STATUS = ?, UPDATED_TIME = ? WHERE CONSENT_ID = ?",
+		PostgresQuery: "UPDATE CONSENT SET CURRENT_STATUS = $1, UPDATED_TIME = $2 WHERE CONSENT_ID = $3",
+	}
+
+	QueryExpireConsentAuthResources = dbmodel.DBQuery{
+		ID:            "EXPIRE_CONSENT_AUTH_RESOURCES",
+		Query:         "UPDATE CONSENT_AUTH_RESOURCE SET AUTH_STATUS = ?, UPDATED_TIME = ? WHERE CONSENT_ID = ? AND AUTH_STATUS IN (?, ?)",
+		PostgresQuery: "UPDATE CONSENT_AUTH_RESOURCE SET AUTH_STATUS = $1, UPDATED_TIME = $2 WHERE CONSENT_ID = $3 AND AUTH_STATUS IN ($4, $5)",
 	}
 )
 
@@ -832,5 +850,49 @@ func getStringPointer(row map[string]interface{}, key string) *string {
 		str := string(val)
 		return &str
 	}
+	return nil
+}
+
+// GetExpiredConsentIDs returns consent IDs whose validity has passed and are in an expirable status.
+func (s *store) GetExpiredConsentIDs(nowMs int64, activeStatus, createdStatus string) ([]string, error) {
+	dbClient, err := s.getDBClient()
+	if err != nil {
+		return nil, fmt.Errorf("failed to get database client: %w", err)
+	}
+
+	rows, err := dbClient.Query(QuerySelectExpiredConsents, nowMs, activeStatus, createdStatus)
+	if err != nil {
+		return nil, err
+	}
+
+	consentIDs := make([]string, 0, len(rows))
+	for _, row := range rows {
+		if id := getString(row, "consent_id"); id != "" {
+			consentIDs = append(consentIDs, id)
+		}
+	}
+	return consentIDs, nil
+}
+
+// ExpireConsent marks a consent and its active auth resources as system-expired.
+func (s *store) ExpireConsent(nowMs int64, consentID, expiredStatus, systemExpiredAuthStatus, approvedAuthStatus, createdAuthStatus string) error {
+	dbClient, err := s.getDBClient()
+	if err != nil {
+		return fmt.Errorf("failed to get database client: %w", err)
+	}
+
+	_, err = dbClient.Execute(QueryExpireConsent, expiredStatus, nowMs, consentID)
+	if err != nil {
+		return fmt.Errorf("failed to expire consent: %w", err)
+	}
+
+	_, err = dbClient.Execute(QueryExpireConsentAuthResources,
+		systemExpiredAuthStatus, nowMs, consentID,
+		approvedAuthStatus, createdAuthStatus,
+	)
+	if err != nil {
+		return fmt.Errorf("failed to expire consent auth resources: %w", err)
+	}
+
 	return nil
 }

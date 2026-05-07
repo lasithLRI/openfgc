@@ -24,7 +24,7 @@ import (
 	"github.com/wso2/openfgc/internal/system/log"
 )
 
-func StartScheduler(interval time.Duration, activeStatus, expiredStatus, approvedAuthStatus, systemExpiredAuthStatus, systemRevokedAuthStatus string) {
+func StartScheduler(interval time.Duration, activeStatus, expiredStatus, createdStatus, approvedAuthStatus, createdAuthStatus, systemExpiredAuthStatus, systemRevokedAuthStatus string) {
 	logger := log.GetLogger().With(log.String(log.LoggerKeyComponentName, "ConsentScheduler"))
 
 	ticker := time.NewTicker(interval)
@@ -33,6 +33,6 @@ func StartScheduler(interval time.Duration, activeStatus, expiredStatus, approve
 	logger.Info("Consent expiration scheduler started", log.String("interval", interval.String()))
 
 	for range ticker.C {
-		go RunExpirationJob(activeStatus, expiredStatus, approvedAuthStatus, systemExpiredAuthStatus, systemRevokedAuthStatus)
+		go RunExpirationJob(activeStatus, expiredStatus, createdStatus, approvedAuthStatus, createdAuthStatus, systemExpiredAuthStatus)
 	}
 }
